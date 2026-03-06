@@ -7,11 +7,22 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "bundle-gateway": "cd .. && npm run build && bash scripts/bundle-gateway.sh",
-    "package": "npm run bundle-gateway && electron-vite build && electron-builder --mac && npm run install-app",
-    "package:arm64": "npm run bundle-gateway && electron-vite build && electron-builder --mac --arm64 && npm run install-app",
-    "package:universal": "npm run bundle-gateway && electron-vite build && electron-builder --mac --universal && npm run install-app",
-    "install-app": "APP=$(find release -maxdepth 2 -name 'dorabot.app' -type d | head -1) && cp -R \"$APP\" /Applications/ && echo \"Installed $APP to /Applications/\"",
+    "bundle-gateway": "cd .. && npm run build && node scripts/bundle-gateway.mjs",
+    "bundle-gateway:mac": "npm run bundle-gateway:mac:arm64",
+    "bundle-gateway:mac:arm64": "cd .. && npm run build && node scripts/bundle-gateway.mjs --platform=darwin --arch=arm64",
+    "bundle-gateway:mac:x64": "cd .. && npm run build && node scripts/bundle-gateway.mjs --platform=darwin --arch=x64",
+    "bundle-gateway:mac:universal": "cd .. && npm run build && node scripts/bundle-gateway.mjs --platform=darwin --arch=universal",
+    "bundle-gateway:win:x64": "cd .. && npm run build && node scripts/bundle-gateway.mjs --platform=win32 --arch=x64",
+    "package": "npm run package:mac",
+    "package:mac": "npm run bundle-gateway:mac && electron-vite build && electron-builder --mac",
+    "package:mac:arm64": "npm run bundle-gateway:mac:arm64 && electron-vite build && electron-builder --mac --arm64 && npm run install-app",
+    "package:mac:x64": "npm run bundle-gateway:mac:x64 && electron-vite build && electron-builder --mac --x64 && npm run install-app",
+    "package:mac:universal": "npm run bundle-gateway:mac:universal && electron-vite build && electron-builder --mac --universal && npm run install-app",
+    "package:win": "npm run package:win:x64",
+    "package:win:x64": "npm run bundle-gateway:win:x64 && electron-vite build && electron-builder --win --x64",
+    "package:arm64": "npm run package:mac:arm64",
+    "package:universal": "npm run package:mac:universal",
+    "install-app": "APP=$(find release -maxdepth 2 -name \"dorabot.app\" -type d | head -1) && cp -R \"$APP\" /Applications/ && echo \"Installed $APP to /Applications/\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -56,3 +67,4 @@
     "vite": "^6.0.0"
   }
 }
+

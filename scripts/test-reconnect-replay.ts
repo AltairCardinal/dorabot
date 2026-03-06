@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs';
-import { Agent } from 'node:http';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createConnection } from 'node:net';
 import { WebSocket } from 'ws';
 import Database from 'better-sqlite3';
 
@@ -30,7 +30,7 @@ async function connectAuthed(socketPath: string, token: string): Promise<{
   events: GatewayMsg[];
   rpc: (method: string, params?: Record<string, unknown>) => Promise<any>;
 }> {
-  const ws = new WebSocket('ws://localhost', { agent: new Agent({ socketPath }) });
+  const ws = new WebSocket('ws://localhost', { createConnection: () => createConnection({ path: socketPath }) });
   const events: GatewayMsg[] = [];
   const pending = new Map<number, { resolve: (value: any) => void; reject: (reason: Error) => void }>();
   let rpcId = 0;

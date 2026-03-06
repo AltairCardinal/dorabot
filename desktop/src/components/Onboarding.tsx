@@ -23,13 +23,15 @@ type Props = {
 };
 
 type ProviderChoice = {
-  provider: 'claude' | 'codex';
+  provider: 'claude' | 'codex' | 'minimax' | 'qwen';
   method: 'oauth' | 'apikey';
 };
 
 type DetectResult = {
   claude: { installed: boolean; hasOAuth: boolean; hasApiKey: boolean };
   codex: { installed: boolean; hasAuth: boolean };
+  minimax: { installed: boolean; hasAuth: boolean };
+  qwen: { installed: boolean; hasAuth: boolean };
 };
 
 type Step = 'welcome' | 'detecting' | 'choose' | 'auth' | 'auth-success' | 'profile' | 'channels' | 'permissions' | 'tour' | 'launch';
@@ -512,6 +514,34 @@ function ChooseStep({
           <div>
             <div className="text-xs font-semibold text-foreground">OpenAI API Key</div>
             <div className="text-[10px] text-muted-foreground mt-0.5">Use your own OpenAI API key with Codex</div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0 mt-2 transition-colors" />
+        </button>
+
+        <button
+          onClick={() => onChoice({ provider: 'minimax', method: 'oauth' })}
+          className="flex items-start gap-3 w-full px-4 py-3 rounded-xl border-2 border-border bg-card/80 backdrop-blur hover:border-primary/50 hover:bg-card transition-all text-left group"
+        >
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+            <span className="text-[10px] font-semibold">MM</span>
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-foreground">MiniMax</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">OAuth or API key (payg/coding plan)</div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0 mt-2 transition-colors" />
+        </button>
+
+        <button
+          onClick={() => onChoice({ provider: 'qwen', method: 'oauth' })}
+          className="flex items-start gap-3 w-full px-4 py-3 rounded-xl border-2 border-border bg-card/80 backdrop-blur hover:border-primary/50 hover:bg-card transition-all text-left group"
+        >
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+            <span className="text-[10px] font-semibold">QW</span>
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-foreground">Qwen</div>
+            <div className="text-[10px] text-muted-foreground mt-0.5">OAuth or API key (payg/coding plan)</div>
           </div>
           <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0 mt-2 transition-colors" />
         </button>
@@ -1283,3 +1313,4 @@ function LaunchStep({
     </div>
   );
 }
+

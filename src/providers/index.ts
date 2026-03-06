@@ -24,8 +24,18 @@ export async function getProviderByName(name: string): Promise<Provider> {
         providers.set(name, new CodexProvider());
         break;
       }
+      case 'minimax': {
+        const { MiniMaxProvider } = await import('./minimax.js');
+        providers.set(name, new MiniMaxProvider());
+        break;
+      }
+      case 'qwen': {
+        const { QwenProvider } = await import('./qwen.js');
+        providers.set(name, new QwenProvider());
+        break;
+      }
       default:
-        throw new Error(`Unknown provider: ${name}. Supported: claude, codex`);
+        throw new Error(`Unknown provider: ${name}. Supported: claude, codex, minimax, qwen`);
     }
   }
   return providers.get(name)!;
@@ -37,3 +47,4 @@ export async function disposeAllProviders(): Promise<void> {
   }
   providers.clear();
 }
+

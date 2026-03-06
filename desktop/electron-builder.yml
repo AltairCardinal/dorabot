@@ -38,9 +38,11 @@ mac:
     - target: dmg
       arch:
         - arm64
+        - x64
     - target: zip
       arch:
         - arm64
+        - x64
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
@@ -50,6 +52,17 @@ mac:
     NSDesktopFolderUsageDescription: "dorabot needs access to your Desktop to read and manage files."
     NSDocumentsFolderUsageDescription: "dorabot needs access to Documents to read and manage files."
     NSDownloadsFolderUsageDescription: "dorabot needs access to Downloads to read and manage files."
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
 
 dmg:
   title: "${productName}"

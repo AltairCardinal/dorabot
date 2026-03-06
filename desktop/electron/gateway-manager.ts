@@ -11,6 +11,10 @@ import { DORABOT_DIR, DORABOT_LOGS_DIR, GATEWAY_LOG_PATH, GATEWAY_SOCKET_PATH, G
 let resolvedPath: string | null = null;
 function getShellPath(): string {
   if (resolvedPath !== null) return resolvedPath;
+  if (process.platform === 'win32') {
+    resolvedPath = process.env.PATH || '';
+    return resolvedPath;
+  }
   try {
     const shell = process.env.SHELL || '/bin/zsh';
     // Avoid interactive shell startup because many configs assume TTY and can fail/hang.
@@ -58,6 +62,11 @@ export class GatewayManager {
     }
 
     try {
+      if (process.platform === 'win32') {
+        const nodePath = execSync('where node', { timeout: 5000, encoding: 'utf-8' })
+          .split(/\r?\n/)[0]?.trim();
+        return nodePath || 'node';
+      }
       const shell = process.env.SHELL || '/bin/zsh';
       const nodePath = execSync(`${shell} -c 'command -v node'`, {
         timeout: 5000,
@@ -102,7 +111,7 @@ export class GatewayManager {
       if (this.process !== proc) {
         throw new Error('Gateway process exited before becoming ready');
       }
-      if (existsSync(tokenPath) && existsSync(socketPath)) {
+      if (existsSync(tokenPath) && (process.platform === 'win32' || existsSync(socketPath))) {
         const listening = await this.isGatewayListening(socketPath);
         if (listening) return;
       }

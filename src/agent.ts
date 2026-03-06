@@ -26,19 +26,23 @@ import { getAllAgents } from './agents/definitions.js';
 import { SessionManager, sdkMessageToSession, type SessionMessage, type MessageMetadata } from './session/manager.js';
 import { loadWorkspaceFiles, ensureWorkspace, TMP_DIR } from './workspace.js';
 
-// Resolve shell PATH once at startup (Electron apps get minimal /usr/bin:/bin:/usr/sbin:/sbin)
+// Resolve shell PATH once at startup.
 let _resolvedShellPath: string | null = null;
 function getShellPath(): string {
   if (_resolvedShellPath !== null) return _resolvedShellPath;
   const currentPath = process.env.PATH || '';
 
-  // If PATH already has common node locations, skip shell resolution
+  if (process.platform === 'win32') {
+    _resolvedShellPath = currentPath;
+    return _resolvedShellPath;
+  }
+
+  // If PATH already has common node locations, skip shell resolution.
   if (currentPath.includes('nvm') || currentPath.includes('homebrew') || currentPath.includes('fnm') || currentPath.includes('/usr/local/bin')) {
     _resolvedShellPath = currentPath;
     return _resolvedShellPath;
   }
 
-  // Resolve from login shell
   try {
     const shell = process.env.SHELL || '/bin/zsh';
     _resolvedShellPath = execSync(`${shell} -lc 'echo -n $PATH'`, {
@@ -49,7 +53,6 @@ function getShellPath(): string {
     _resolvedShellPath = currentPath;
   }
 
-  // Append common node binary locations as fallback
   const fallbackPaths = [
     '/usr/local/bin',
     '/opt/homebrew/bin',
@@ -66,7 +69,6 @@ function getShellPath(): string {
 
   return _resolvedShellPath;
 }
-
 // clean env for SDK subprocess - strip vscode vars that cause file watcher crashes
 function cleanEnvForSdk(): Record<string, string> {
   const env: Record<string, string> = {};

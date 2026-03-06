@@ -274,7 +274,7 @@ function clearCodexOAuthTokens(): void {
 async function exchangeCodexAuthCode(
   code: string,
   verifier: string,
-): Promise<CodexOAuthTokens | null> {
+): Promise<{ tokens: CodexOAuthTokens | null; error?: string }> {
   try {
     const res = await fetch(OAUTH_TOKEN_URL, {
       method: 'POST',
@@ -290,24 +290,41 @@ async function exchangeCodexAuthCode(
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       console.error(`[codex] token exchange failed: ${res.status} ${text}`);
-      return null;
+      let error = `Token exchange failed (${res.status})`;
+      try {
+        const parsed = JSON.parse(text) as { error?: { code?: string; message?: string } };
+        const code = parsed?.error?.code;
+        const message = parsed?.error?.message;
+        if (code === 'unsupported_country_region_territory') {
+          error = 'ChatGPT OAuth is not supported in your current country/region. Please use an OpenAI API key instead.';
+        } else if (typeof message === 'string' && message.trim()) {
+          error = message.trim();
+        }
+      } catch {
+        // keep default error message
+      }
+      return { tokens: null, error };
     }
     const data = await res.json() as { access_token: string; refresh_token: string; expires_in: number };
-    if (!data.access_token || !data.refresh_token) return null;
+    if (!data.access_token || !data.refresh_token) {
+      return { tokens: null, error: 'OAuth response missing access/refresh token.' };
+    }
     const accountId = getAccountId(data.access_token);
     if (!accountId) {
       console.error('[codex] failed to extract accountId from token');
-      return null;
+      return { tokens: null, error: 'OAuth token missing account information.' };
     }
     return {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_at: Date.now() + data.expires_in * 1000,
-      account_id: accountId,
+      tokens: {
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_at: Date.now() + data.expires_in * 1000,
+        account_id: accountId,
+      },
     };
   } catch (err) {
     console.error('[codex] token exchange error:', err);
-    return null;
+    return { tokens: null, error: err instanceof Error ? err.message : 'Token exchange failed' };
   }
 }
 
@@ -607,7 +624,7 @@ export class CodexProvider implements Provider {
     }
   }
 
-  async loginWithApiKey(apiKey: string): Promise<ProviderAuthStatus> {
+  async loginWithApiKey(apiKey: string, _options?: { keyType?: 'payg' | 'coding' }): Promise<ProviderAuthStatus> {
     ensureCodexHome();
     // Persist to dorabot-managed file
     persistOpenAIKey(apiKey);
@@ -659,9 +676,9 @@ export class CodexProvider implements Provider {
         return { authenticated: false, error: 'OAuth callback timed out or was cancelled' };
       }
 
-      const tokens = await exchangeCodexAuthCode(code, verifier);
+      const { tokens, error } = await exchangeCodexAuthCode(code, verifier);
       if (!tokens) {
-        return { authenticated: false, error: 'Token exchange failed' };
+        return { authenticated: false, error: error || 'Token exchange failed' };
       }
 
       persistCodexOAuthTokens(tokens);
@@ -1000,3 +1017,4 @@ export class CodexProvider implements Provider {
     }
   }
 }
+

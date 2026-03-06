@@ -16,6 +16,8 @@ import { VirtualChatList } from '@/components/VirtualChatList';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { safeParse } from '@/lib/safe-parse';
+import { MINIMAX_MODELS, getQwenModels } from '@/lib/providerModels';
+import { getSessionListKey } from '@/lib/sessionGuards';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Square, ChevronDown, ChevronRight, Sparkles,
@@ -136,21 +138,35 @@ function ModelSelector({ gateway, disabled }: { gateway: ReturnType<typeof useGa
   const providerName = (gateway.configData as any)?.provider?.name || 'claude';
   const claudeModel = gateway.model || 'claude-sonnet-4-5-20250929';
   const codexModel = (gateway.configData as any)?.provider?.codex?.model || 'gpt-5.3-codex';
-  const currentValue = providerName === 'codex' ? `codex:${codexModel}` : `claude:${claudeModel}`;
+  const minimaxModel = (gateway.configData as any)?.provider?.minimax?.model || MINIMAX_MODELS[0].value;
+  const qwenAuthMode = (gateway.configData as any)?.provider?.qwen?.authMode || 'payg';
+  const qwenModels = getQwenModels(qwenAuthMode);
+  const qwenModel = (gateway.configData as any)?.provider?.qwen?.model || qwenModels[0].value;
+  const currentValue = providerName === 'codex' ? `codex:${codexModel}` : providerName === 'minimax' ? `minimax:${minimaxModel}` : providerName === 'qwen' ? `qwen:${qwenModel}` : `claude:${claudeModel}`;
 
   const handleChange = async (encoded: string) => {
     const [provider, model] = encoded.split(':') as [string, string];
     if (provider === 'claude') {
       if (providerName !== 'claude') await gateway.setProvider('claude');
       gateway.changeModel(model);
-    } else {
+    } else if (provider === 'codex') {
       if (providerName !== 'codex') await gateway.setProvider('codex');
       await gateway.setConfig('provider.codex.model', model);
+    } else if (provider === 'minimax') {
+      if (providerName !== 'minimax') await gateway.setProvider('minimax');
+      await gateway.setConfig('provider.minimax.model', model);
+    } else if (provider === 'qwen') {
+      if (providerName !== 'qwen') await gateway.setProvider('qwen');
+      await gateway.setConfig('provider.qwen.model', model);
     }
   };
 
   const currentLabel = providerName === 'codex'
     ? OPENAI_MODELS.find(m => m.value === codexModel)?.label || codexModel
+    : providerName === 'minimax'
+    ? `MiniMax ${minimaxModel}`
+    : providerName === 'qwen'
+    ? `Qwen ${qwenModel}`
     : ANTHROPIC_MODELS.find(m => m.value === claudeModel)?.label || claudeModel;
 
   const reasoningEffort = (gateway.configData as any)?.reasoningEffort || null;
@@ -182,6 +198,14 @@ function ModelSelector({ gateway, disabled }: { gateway: ReturnType<typeof useGa
             </SelectItem>
           ))}
           <div className="px-2 py-1 mt-1 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider border-t border-border">OpenAI</div>
+          <div className="px-2 py-1 mt-1 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider border-t border-border">MiniMax</div>
+          {MINIMAX_MODELS.map(m => (
+            <SelectItem key={m.value} value={`minimax:${m.value}`} className="text-xs">{m.label}</SelectItem>
+          ))}
+          <div className="px-2 py-1 mt-1 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider border-t border-border">Qwen</div>
+          {qwenModels.map(m => (
+            <SelectItem key={m.value} value={`qwen:${m.value}`} className="text-xs">{m.label}</SelectItem>
+          ))}
           {OPENAI_MODELS.map(m => (
             <SelectItem key={m.value} value={`codex:${m.value}`} className="text-xs">
               <span className="flex items-center gap-1.5">
@@ -640,9 +664,11 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
 
   // Filter approvals to this session only (avoid showing other panes' approvals)
   const sessionApprovals = useMemo(() => {
-    if (!sessionKey) return gateway.pendingApprovals;
-    return gateway.pendingApprovals.filter(a => !a.sessionKey || a.sessionKey === sessionKey);
+    if (!sessionKey) return [];
+    return gateway.pendingApprovals.filter(a => a.sessionKey === sessionKey);
   }, [gateway.pendingApprovals, sessionKey]);
+
+  const hasBlockingQuestion = !!pendingQuestion;
 
   useEffect(() => {
     if (isEmpty) {
@@ -654,7 +680,7 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
 
   const handleSend = async (overridePrompt?: string) => {
     const prompt = overridePrompt || input.trim();
-    if ((!prompt && attachedImages.length === 0) || sending || pendingQuestion) return;
+    if ((!prompt && attachedImages.length === 0) || sending || hasBlockingQuestion) return;
 
     const images = attachedImages.length > 0 ? [...attachedImages] : undefined;
     nextAutoScrollBehaviorRef.current = 'smooth';
@@ -863,6 +889,8 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
     <div className="flex flex-col h-full min-h-0 min-w-0">
       {/* messages */}
       <VirtualChatList
+        key={getSessionListKey(sessionKey)}
+        resetKey={getSessionListKey(sessionKey)}
         items={chatItems}
         renderItem={renderItem}
         className="flex-1 min-h-0 min-w-0 overflow-auto"
@@ -911,7 +939,7 @@ export function ChatView({ gateway, chatItems, agentStatus, pendingQuestion, ses
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={connected ? 'type a message...' : 'waiting for gateway...'}
-            disabled={!connected || !!pendingQuestion}
+            disabled={!connected || hasBlockingQuestion}
             className="w-full min-h-[64px] max-h-[200px] resize-none text-[13px] border-0 rounded-2xl bg-transparent shadow-none focus-visible:ring-0"
             rows={2}
           />

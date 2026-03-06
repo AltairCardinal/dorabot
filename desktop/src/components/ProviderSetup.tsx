@@ -2,10 +2,11 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { useGateway } from '../hooks/useGateway';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArrowLeft, ExternalLink, Loader2, AlertCircle, ClipboardPaste } from 'lucide-react';
 
 type Props = {
-  provider: 'claude' | 'codex';
+  provider: 'claude' | 'codex' | 'minimax' | 'qwen';
   gateway: ReturnType<typeof useGateway>;
   onSuccess: () => void;
   onBack?: () => void;
@@ -17,7 +18,10 @@ export function ProviderSetup({ provider, gateway, onSuccess, onBack, compact, p
   if (provider === 'claude') {
     return <ClaudeSetup gateway={gateway} onSuccess={onSuccess} onBack={onBack} compact={compact} preferredMethod={preferredMethod} />;
   }
-  return <CodexSetup gateway={gateway} onSuccess={onSuccess} onBack={onBack} compact={compact} preferredMethod={preferredMethod} />;
+  if (provider === 'codex') {
+    return <CodexSetup gateway={gateway} onSuccess={onSuccess} onBack={onBack} compact={compact} preferredMethod={preferredMethod} />;
+  }
+  return <ProviderApiKeyOAuthSetup provider={provider} gateway={gateway} onSuccess={onSuccess} onBack={onBack} compact={compact} preferredMethod={preferredMethod} />;
 }
 
 type ClaudeProps = Omit<Props, 'provider'> & { preferredMethod?: 'oauth' | 'apikey' };
@@ -29,6 +33,7 @@ function ClaudeSetup({ gateway, onSuccess, onBack, compact, preferredMethod }: C
   const [apiKey, setApiKey] = useState('');
   const [authCode, setAuthCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [minimaxRegion, setMinimaxRegion] = useState<'global' | 'cn'>(() => ((gateway.configData as any)?.provider?.minimax?.region === 'cn' ? 'cn' : 'global'));
   const [error, setError] = useState<string | null>(null);
   const autoStartedRef = useRef(false);
 
@@ -295,11 +300,13 @@ function CodexSetup({ gateway, onSuccess, onBack, compact, preferredMethod }: Co
   );
   const [apiKey, setApiKey] = useState('');
   const [loading, setLoading] = useState(false);
+  const [minimaxRegion, setMinimaxRegion] = useState<'global' | 'cn'>(() => ((gateway.configData as any)?.provider?.minimax?.region === 'cn' ? 'cn' : 'global'));
   const [error, setError] = useState<string | null>(null);
   const loginIdRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoStartedRef = useRef(false);
+  const pollInFlightRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -338,17 +345,34 @@ function CodexSetup({ gateway, onSuccess, onBack, compact, preferredMethod }: Co
 
       // Poll for completion
       pollRef.current = setInterval(async () => {
+        if (pollInFlightRef.current) return;
+        pollInFlightRef.current = true;
         try {
           const res = await gateway.completeOAuth('codex', loginId);
           if (res.authenticated) {
             if (pollRef.current) clearInterval(pollRef.current);
             if (timeoutRef.current) clearTimeout(timeoutRef.current);
             pollRef.current = null;
+            timeoutRef.current = null;
+            pollInFlightRef.current = false;
             setLoading(false);
             onSuccess();
+            return;
+          }
+          if (res.error) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            pollRef.current = null;
+            timeoutRef.current = null;
+            setLoading(false);
+            setMode('choose');
+            setError(res.error);
+            return;
           }
         } catch {
           // still waiting
+        } finally {
+          pollInFlightRef.current = false;
         }
       }, 2000);
 
@@ -356,6 +380,8 @@ function CodexSetup({ gateway, onSuccess, onBack, compact, preferredMethod }: Co
       timeoutRef.current = setTimeout(() => {
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = null;
+        timeoutRef.current = null;
+        pollInFlightRef.current = false;
         setLoading(false);
         setMode('choose');
         setError('Login timed out. Please try again.');
@@ -388,6 +414,8 @@ function CodexSetup({ gateway, onSuccess, onBack, compact, preferredMethod }: Co
     if (pollRef.current) clearInterval(pollRef.current);
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     pollRef.current = null;
+    timeoutRef.current = null;
+    pollInFlightRef.current = false;
     setLoading(false);
     setMode('choose');
   }, []);
@@ -526,6 +554,186 @@ function CodexSetup({ gateway, onSuccess, onBack, compact, preferredMethod }: Co
       {!compact && mode !== 'apikey' && (
         <div className="text-[10px] text-muted-foreground text-center">
           ChatGPT Plus subscription required for OAuth
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+type ProviderApiKeyOAuthProps = Omit<Props, 'provider'> & { provider: 'minimax' | 'qwen'; preferredMethod?: 'oauth' | 'apikey' };
+
+function ProviderApiKeyOAuthSetup({ provider, gateway, onSuccess, onBack, compact, preferredMethod }: ProviderApiKeyOAuthProps) {
+  const [mode, setMode] = useState<'choose' | 'oauth-waiting' | 'apikey-payg' | 'apikey-coding'>(
+    preferredMethod === 'apikey' ? 'apikey-payg' : 'choose'
+  );
+  const [apiKey, setApiKey] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [minimaxRegion, setMinimaxRegion] = useState<'global' | 'cn'>(() => ((gateway.configData as any)?.provider?.minimax?.region === 'cn' ? 'cn' : 'global'));
+  const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollInFlightRef = useRef(false);
+
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+  }, []);
+
+  const label = provider === 'minimax' ? 'MiniMax' : 'Qwen';
+
+  const startOAuth = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await gateway.setConfig('provider.' + provider + '.authMode', 'oauth');
+      const oauthOptions = provider === 'minimax' ? { region: minimaxRegion } : undefined;
+      const { authUrl, loginId } = await gateway.startOAuth(provider, oauthOptions);
+      setMode('oauth-waiting');
+      (window as any).electronAPI?.openExternal?.(authUrl) || window.open(authUrl, '_blank');
+
+      pollRef.current = setInterval(async () => {
+        if (pollInFlightRef.current) return;
+        pollInFlightRef.current = true;
+        try {
+          const res = await gateway.completeOAuth(provider, loginId);
+          if (res.authenticated) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            pollRef.current = null;
+            timeoutRef.current = null;
+            setLoading(false);
+            onSuccess();
+            return;
+          }
+          if (res.error) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            pollRef.current = null;
+            timeoutRef.current = null;
+            setLoading(false);
+            setMode('choose');
+            setError(res.error);
+          }
+        } finally {
+          pollInFlightRef.current = false;
+        }
+      }, 2000);
+
+      timeoutRef.current = setTimeout(() => {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+        timeoutRef.current = null;
+        pollInFlightRef.current = false;
+        setLoading(false);
+        setMode('choose');
+        setError('Login timed out. Please try again.');
+      }, 180_000);
+    } catch (err) {
+      setLoading(false);
+      setError(err instanceof Error ? err.message : 'OAuth failed');
+    }
+  }, [gateway, minimaxRegion, onSuccess, provider]);
+
+  const submitApiKey = useCallback(async (keyType: 'payg' | 'coding') => {
+    const key = apiKey.trim();
+    if (!key) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await gateway.authWithApiKey(provider, key, keyType);
+      await gateway.setConfig('provider.' + provider + '.authMode', keyType);
+      if (res.authenticated) onSuccess();
+      else setError(res.error || 'Authentication failed');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to authenticate');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiKey, gateway, onSuccess, provider]);
+
+  return (
+    <div className="space-y-4">
+      {!compact && onBack && (
+        <button onClick={onBack} className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft className="w-3 h-3" />
+          back
+        </button>
+      )}
+
+      {!compact && (
+        <div className="text-center space-y-1">
+          <div className="text-sm font-semibold">{label}</div>
+          <div className="text-[11px] text-muted-foreground">OAuth or API key (payg/coding plan)</div>
+        </div>
+      )}
+
+      {mode === 'oauth-waiting' ? (
+        <div className="flex flex-col items-center gap-3 py-4">
+          <Loader2 className="w-6 h-6 animate-spin text-primary" />
+          <div className="text-[11px] text-muted-foreground">waiting for login in browser...</div>
+        </div>
+      ) : mode === 'apikey-payg' || mode === 'apikey-coding' ? (
+        <div className="space-y-2">
+          <Input
+            type="password"
+            placeholder="enter API key"
+            value={apiKey}
+            onChange={e => { setApiKey(e.target.value); setError(null); }}
+            onKeyDown={e => e.key === 'Enter' && submitApiKey(mode === 'apikey-coding' ? 'coding' : 'payg')}
+            className="h-8 text-[11px] font-mono"
+            disabled={loading}
+            autoFocus
+          />
+          <Button
+            size="sm"
+            className="h-7 text-[11px] w-full"
+            onClick={() => submitApiKey(mode === 'apikey-coding' ? 'coding' : 'payg')}
+            disabled={!apiKey.trim() || loading}
+          >
+            {loading ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : null}
+            {loading ? 'connecting...' : `connect (${mode === 'apikey-coding' ? 'coding plan' : 'payg'})`}
+          </Button>
+          {!compact && (
+            <button onClick={() => setMode('choose')} className="text-[10px] text-muted-foreground hover:text-foreground transition-colors w-full text-center">
+              choose another method
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          {provider === 'minimax' && (
+            <div className="space-y-1">
+              <div className="text-[10px] text-muted-foreground">region</div>
+              <Select value={minimaxRegion} onValueChange={v => setMinimaxRegion(v as 'global' | 'cn')} disabled={loading}>
+                <SelectTrigger className="h-8 text-[11px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="global" className="text-[11px]">global</SelectItem>
+                  <SelectItem value="cn" className="text-[11px]">cn</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <Button size="sm" className="h-8 text-[11px] w-full" onClick={startOAuth} disabled={loading}>
+            {loading ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : null}
+            sign in with OAuth
+          </Button>
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            <div className="flex-1 h-px bg-border" />or use an API key<div className="flex-1 h-px bg-border" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="outline" size="sm" className="h-7 text-[11px] w-full" onClick={() => setMode('apikey-payg')} disabled={loading}>API key (payg)</Button>
+            <Button variant="outline" size="sm" className="h-7 text-[11px] w-full" onClick={() => setMode('apikey-coding')} disabled={loading}>API key (coding)</Button>
+          </div>
+        </>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-1.5 text-[10px] text-destructive">
+          <AlertCircle className="w-3 h-3 shrink-0" />
+          {error}
         </div>
       )}
     </div>

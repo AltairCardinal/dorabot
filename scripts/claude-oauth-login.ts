@@ -2,18 +2,18 @@
 // quick oauth login via gateway rpc
 
 import { readFileSync } from 'node:fs';
-import { Agent } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createConnection } from 'node:net';
 import { WebSocket } from 'ws';
 import { createInterface } from 'node:readline';
 
 const TOKEN_FILE = join(homedir(), '.dorabot', 'gateway-token');
-const SOCKET_FILE = join(homedir(), '.dorabot', 'gateway.sock');
+const SOCKET_FILE = process.platform === 'win32' ? '\\\\.\\pipe\\dorabot-gateway' : join(homedir(), '.dorabot', 'gateway.sock');
 const token = readFileSync(TOKEN_FILE, 'utf-8').trim();
 
 const ws = new WebSocket('ws://localhost', {
-  agent: new Agent({ socketPath: SOCKET_FILE }),
+  createConnection: () => createConnection({ path: SOCKET_FILE }),
 });
 
 let msgId = 0;

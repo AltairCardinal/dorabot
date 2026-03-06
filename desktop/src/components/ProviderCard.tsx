@@ -114,6 +114,8 @@ export function ProviderCard({ gateway, disabled }: Props) {
               <SelectContent>
                 <SelectItem value="claude" className="text-[11px]">Claude (Anthropic)</SelectItem>
                 <SelectItem value="codex" className="text-[11px]">OpenAI (Codex)</SelectItem>
+                <SelectItem value="minimax" className="text-[11px]">MiniMax</SelectItem>
+                <SelectItem value="qwen" className="text-[11px]">Qwen</SelectItem>
               </SelectContent>
             </Select>
           </SettingRow>
@@ -148,7 +150,7 @@ export function ProviderCard({ gateway, disabled }: Props) {
             {showAuthSetup && (
               <div className="border border-border rounded-lg p-3 bg-secondary/30">
                 <ProviderSetup
-                  provider={providerName as 'claude' | 'codex'}
+                  provider={providerName as 'claude' | 'codex' | 'minimax' | 'qwen'}
                   gateway={gateway}
                   onSuccess={handleAuthSuccess}
                   compact

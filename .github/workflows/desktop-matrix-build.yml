@@ -1,0 +1,98 @@
+name: Desktop Matrix Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  mac-build:
+    name: macOS ${{ matrix.arch }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install backend deps
+        run: npm ci
+
+      - name: Install desktop deps
+        run: npm ci
+        working-directory: desktop
+
+      - name: Sync desktop version
+        run: |
+          node -e "const fs=require('fs');const root=JSON.parse(fs.readFileSync('package.json','utf8'));const d='desktop/package.json';const desktop=JSON.parse(fs.readFileSync(d,'utf8'));desktop.version=root.version;fs.writeFileSync(d,JSON.stringify(desktop,null,2)+'\\n');"
+
+      - name: Build gateway bundle
+        run: npm -C desktop run bundle-gateway:mac:${{ matrix.arch }}
+
+      - name: Build desktop renderer/main
+        run: npm -C desktop run build
+
+      - name: Package mac app
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
+        working-directory: desktop
+
+      - name: Upload mac artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dorabot-mac-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.zip
+
+  windows-build:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install backend deps
+        run: npm ci
+
+      - name: Install desktop deps
+        run: npm ci
+        working-directory: desktop
+
+      - name: Sync desktop version
+        run: |
+          node -e "const fs=require('fs');const root=JSON.parse(fs.readFileSync('package.json','utf8'));const d='desktop/package.json';const desktop=JSON.parse(fs.readFileSync(d,'utf8'));desktop.version=root.version;fs.writeFileSync(d,JSON.stringify(desktop,null,2)+'\\n');"
+
+      - name: Build gateway bundle
+        run: npm -C desktop run bundle-gateway:win:x64
+
+      - name: Build desktop renderer/main
+        run: npm -C desktop run build
+
+      - name: Package windows app
+        run: npx electron-builder --win --x64 --publish never
+        working-directory: desktop
+
+      - name: Upload windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dorabot-win-x64
+          if-no-files-found: error
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.yml
+            desktop/release/*.blockmap

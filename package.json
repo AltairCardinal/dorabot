@@ -20,7 +20,8 @@
     "test:reconnect-replay": "tsx scripts/test-reconnect-replay.ts",
     "test:question-lifecycle": "tsx scripts/test-question-lifecycle.ts",
     "test:load-7x4": "tsx scripts/test-load-7x4.ts",
-    "test:scheduler-run": "tsx scripts/test-scheduler-run-item.ts"
+    "test:scheduler-run": "tsx scripts/test-scheduler-run-item.ts",
+    "test:desktop-regressions": "tsx scripts/test-desktop-regressions.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.42",

@@ -18,7 +18,15 @@ export const LOGS_DIR = join(DORABOT_DIR, 'logs');
 export const SESSIONS_DIR = join(DORABOT_DIR, 'sessions');
 export const SKILLS_DIR = join(DORABOT_DIR, 'skills');
 export const TMP_DIR = join(DORABOT_DIR, 'tmp');
-export const GATEWAY_SOCKET_PATH = join(DORABOT_DIR, 'gateway.sock');
+export function getGatewayIpcPath(baseDir = DORABOT_DIR): string {
+  if (process.platform === 'win32') {
+    return '\\\\.\\pipe\\dorabot-gateway';
+  }
+  return join(baseDir, 'gateway.sock');
+}
+export const GATEWAY_IPC_PATH = getGatewayIpcPath();
+// Backward-compatible alias for older imports.
+export const GATEWAY_SOCKET_PATH = GATEWAY_IPC_PATH;
 export const TELEGRAM_DIR = join(DORABOT_DIR, 'telegram');
 export const TELEGRAM_TOKEN_PATH = join(TELEGRAM_DIR, 'token');
 export const TELEGRAM_MEDIA_DIR = join(DORABOT_DIR, 'media', 'telegram');
@@ -29,6 +37,8 @@ export const CLAUDE_KEY_PATH = join(DORABOT_DIR, '.anthropic-key');
 export const CLAUDE_OAUTH_PATH = join(DORABOT_DIR, '.claude-oauth.json');
 export const CODEX_OAUTH_PATH = join(DORABOT_DIR, '.codex-oauth.json');
 export const OPENAI_KEY_PATH = join(DORABOT_DIR, '.openai-key');
+export const MINIMAX_AUTH_PATH = join(DORABOT_DIR, '.minimax-auth.json');
+export const QWEN_AUTH_PATH = join(DORABOT_DIR, '.qwen-auth.json');
 export const LEGACY_CODEX_AUTH_PATH = join(DORABOT_DIR, 'codex-auth.json');
 
 export function toHomeAlias(path: string): string {
@@ -252,3 +262,4 @@ export function loadRecentMemories(days = 3): { date: string; content: string }[
     return [];
   }
 }
+

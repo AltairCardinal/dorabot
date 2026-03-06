@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { jsonrepair } from 'jsonrepair';
 import { getGatewayClient } from '../gateway/client';
+import { normalizeToolResultText, resolveQuestionSessionKey, shouldAcceptSnapshotPending } from '../lib/sessionGuards';
 
 /** Deep-set a dotted key path (e.g. "provider.codex.model") in an immutable object */
 function setNestedKey(obj: Record<string, unknown>, key: string, value: unknown): Record<string, unknown> {
@@ -297,12 +298,12 @@ function sessionMessagesToChatItems(messages: SessionMessage[]): ChatItem[] {
               activeTaskIds.delete(toolUseId);
               const subs = taskSubItems.get(toolUseId) || [];
               taskSubItems.delete(toolUseId);
-              const trimmed = resultText.slice(0, 2000);
+              const fullText = normalizeToolResultText(resultText);
 
               for (let i = items.length - 1; i >= 0; i--) {
                 const it = items[i];
                 if (it.type === 'tool_use' && it.id === toolUseId) {
-                  items[i] = { ...it, output: trimmed, is_error: block.is_error || false, subItems: subs.length > 0 ? subs : trimmed ? [{ type: 'text' as const, content: trimmed, timestamp: it.timestamp }] : undefined };
+                  items[i] = { ...it, output: fullText, is_error: block.is_error || false, subItems: subs.length > 0 ? subs : fullText ? [{ type: 'text' as const, content: fullText, timestamp: it.timestamp }] : undefined };
                   break;
                 }
               }
@@ -316,7 +317,7 @@ function sessionMessagesToChatItems(messages: SessionMessage[]): ChatItem[] {
                 for (let i = subs.length - 1; i >= 0; i--) {
                   const si = subs[i];
                   if (si.type === 'tool_use' && si.id === toolUseId) {
-                    subs[i] = { ...si, output: resultText.slice(0, 1000), is_error: block.is_error || false };
+                    subs[i] = { ...si, output: resultText, is_error: block.is_error || false };
                     break;
                   }
                 }
@@ -328,7 +329,7 @@ function sessionMessagesToChatItems(messages: SessionMessage[]): ChatItem[] {
             for (let i = items.length - 1; i >= 0; i--) {
               const it = items[i];
               if (it.type === 'tool_use' && it.id === toolUseId) {
-                items[i] = { ...it, output: resultText.slice(0, 2000), is_error: block.is_error || false };
+                items[i] = { ...it, output: resultText, is_error: block.is_error || false };
                 break;
               }
             }
@@ -494,6 +495,7 @@ export function useGateway() {
   const onSessionIdChangeRef = useRef<((sessionKey: string, sessionId: string) => void) | null>(null);
   const onFirstMessageRef = useRef<((sessionKey: string, preview: string) => void) | null>(null);
   const onNotifiableEventRef = useRef<((event: NotifiableEvent) => void) | null>(null);
+  const questionSessionByRequestRef = useRef<Map<string, string>>(new Map());
 
   const markSeqIfNew = useCallback((seq: number, sessionKey?: string): boolean => {
     if (seenSeqsRef.current.has(seq)) return false;
@@ -817,6 +819,7 @@ export function useGateway() {
       case 'agent.ask_user': {
         const d = data as { requestId: string; sessionKey?: string; questions: AskUserQuestion['questions']; timestamp: number };
         const sk = d.sessionKey;
+        if (d.requestId && sk) questionSessionByRequestRef.current.set(d.requestId, sk);
         if (sk && trackedSessionsRef.current.has(sk)) {
           setSessionStates(prev => {
             const state = prev[sk];
@@ -836,7 +839,7 @@ export function useGateway() {
 
       case 'agent.question_state': {
         const d = data as { requestId: string; sessionKey?: string; status: 'pending' | 'answered' | 'timeout' | 'cancelled'; timestamp: number };
-        const sk = d.sessionKey;
+        const sk = resolveQuestionSessionKey(d.requestId, d.sessionKey, questionSessionByRequestRef.current);
         if (!sk || !trackedSessionsRef.current.has(sk)) break;
         if (d.status === 'pending') break;
         setSessionStates(prev => {
@@ -852,12 +855,13 @@ export function useGateway() {
             },
           };
         });
+        if (d.requestId) questionSessionByRequestRef.current.delete(d.requestId);
         break;
       }
 
       case 'agent.question_dismissed': {
         const d = data as { requestId: string; sessionKey?: string; reason: string };
-        const sk = d.sessionKey;
+        const sk = resolveQuestionSessionKey(d.requestId, d.sessionKey, questionSessionByRequestRef.current);
         if (sk && trackedSessionsRef.current.has(sk)) {
           setSessionStates(prev => {
             const state = prev[sk];
@@ -865,6 +869,7 @@ export function useGateway() {
             return { ...prev, [sk]: { ...state, pendingQuestion: null } };
           });
         }
+        if (d.requestId) questionSessionByRequestRef.current.delete(d.requestId);
         break;
       }
 
@@ -1023,15 +1028,32 @@ export function useGateway() {
           const lastResultIdx = state.chatItems.map(i => i.type).lastIndexOf('result');
           const replaceFrom = state.chatItems.findIndex((it, idx) => idx > lastResultIdx && it.type !== 'user');
           const base = replaceFrom >= 0 ? state.chatItems.slice(0, replaceFrom) : state.chatItems;
+
+          const snapshotPending = snap.pendingQuestion && (snap.pendingQuestionStatus ?? 'pending') === 'pending'
+            ? { requestId: snap.pendingQuestion.requestId, questions: snap.pendingQuestion.questions }
+            : null;
+          const pendingBelongsToThisSession = shouldAcceptSnapshotPending({
+            snapshotPending,
+            currentToolName: snap.currentTool?.name || null,
+            statePendingRequestId: state.pendingQuestion?.requestId || null,
+            mappedSessionKey: snapshotPending ? questionSessionByRequestRef.current.get(snapshotPending.requestId) : undefined,
+            sessionKey: sk,
+          });
+          const nextPending = pendingBelongsToThisSession ? snapshotPending : null;
+          if (nextPending) {
+            questionSessionByRequestRef.current.set(nextPending.requestId, sk);
+          } else if (snap.pendingQuestion?.requestId) {
+            const mapped = questionSessionByRequestRef.current.get(snap.pendingQuestion.requestId);
+            if (mapped === sk) questionSessionByRequestRef.current.delete(snap.pendingQuestion.requestId);
+          }
+
           return {
             ...prev,
             [sk]: {
               ...state,
               chatItems: [...base, ...items],
               agentStatus: snap.status,
-              pendingQuestion: snap.pendingQuestion && (snap.pendingQuestionStatus ?? 'pending') === 'pending'
-                ? { requestId: snap.pendingQuestion.requestId, questions: snap.pendingQuestion.questions }
-                : null,
+              pendingQuestion: nextPending,
             },
           };
         });
@@ -1690,16 +1712,16 @@ export function useGateway() {
     return res;
   }, [rpc]);
 
-  const authWithApiKey = useCallback(async (provider: string, apiKey: string) => {
-    const res = await rpc('provider.auth.apiKey', { provider, apiKey }) as ProviderAuthInfo;
+  const authWithApiKey = useCallback(async (provider: string, apiKey: string, keyType?: 'payg' | 'coding') => {
+    const res = await rpc('provider.auth.apiKey', { provider, apiKey, keyType }) as ProviderAuthInfo;
     if (res.authenticated) {
       setProviderInfo(prev => prev ? { ...prev, auth: res } : { name: provider, auth: res });
     }
     return res;
   }, [rpc]);
 
-  const startOAuth = useCallback(async (provider: string) => {
-    return await rpc('provider.auth.oauth', { provider }) as { authUrl: string; loginId: string };
+  const startOAuth = useCallback(async (provider: string, options?: { region?: 'global' | 'cn' }) => {
+    return await rpc('provider.auth.oauth', { provider, ...(options || {}) }) as { authUrl: string; loginId: string };
   }, [rpc]);
 
   const completeOAuth = useCallback(async (provider: string, loginId: string) => {
@@ -1722,6 +1744,8 @@ export function useGateway() {
     return await rpc('provider.detect') as {
       claude: { installed: boolean; hasOAuth: boolean; hasApiKey: boolean };
       codex: { installed: boolean; hasAuth: boolean };
+      minimax: { installed: boolean; hasAuth: boolean };
+      qwen: { installed: boolean; hasAuth: boolean };
     };
   }, [rpc]);
 
@@ -1880,3 +1904,5 @@ export function useGateway() {
     detectProviders,
   };
 }
+
+

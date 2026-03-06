@@ -96,10 +96,10 @@ export interface Provider {
   getAuthStatus(): Promise<ProviderAuthStatus>;
 
   /** Authenticate with an API key */
-  loginWithApiKey(apiKey: string): Promise<ProviderAuthStatus>;
+  loginWithApiKey(apiKey: string, options?: { keyType?: 'payg' | 'coding' }): Promise<ProviderAuthStatus>;
 
   /** Start OAuth flow - returns URL to open in browser */
-  loginWithOAuth?(): Promise<{ authUrl: string; loginId: string }>;
+  loginWithOAuth?(options?: Record<string, unknown>): Promise<{ authUrl: string; loginId: string }>;
 
   /** Wait for OAuth completion after user completes browser flow */
   completeOAuthLogin?(loginId: string): Promise<ProviderAuthStatus>;
@@ -110,3 +110,4 @@ export interface Provider {
   /** Clean up resources */
   dispose?(): Promise<void>;
 }
+

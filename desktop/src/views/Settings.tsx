@@ -12,6 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Shield, Brain, Globe, Settings2, Box, Lock, FolderLock, X, Plus, Wrench, Activity, Sun, Check } from 'lucide-react';
+import { MINIMAX_MODELS, getQwenModels } from '@/lib/providerModels';
 
 type Props = {
   gateway: ReturnType<typeof useGateway>;
@@ -91,6 +92,12 @@ export function SettingsView({ gateway }: Props) {
 
           {/* openai provider */}
           <OpenAICard gateway={gateway} disabled={disabled} />
+
+          {/* minimax provider */}
+          <MiniMaxCard gateway={gateway} disabled={disabled} />
+
+          {/* qwen provider */}
+          <QwenCard gateway={gateway} disabled={disabled} />
 
           {/* gateway approval — shared across providers */}
           <Card>
@@ -806,6 +813,166 @@ function PathPoliciesCard({ gateway, disabled }: { gateway: ReturnType<typeof us
           <div className="text-[10px] text-muted-foreground bg-muted/50 rounded px-2 py-1.5">
             per-channel path restrictions are in each channel's security settings
           </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+function MiniMaxCard({ gateway, disabled }: { gateway: ReturnType<typeof useGateway>; disabled: boolean }) {
+  const [showAuth, setShowAuth] = useState(false);
+  const [authStatus, setAuthStatus] = useState<ProviderAuthView | null>(null);
+  const cfg = gateway.configData as Record<string, any> | null;
+  const model = cfg?.provider?.minimax?.model || MINIMAX_MODELS[0].value;
+  const authMode = cfg?.provider?.minimax?.authMode || 'payg';
+  const region = cfg?.provider?.minimax?.region || 'global';
+
+  useEffect(() => {
+    gateway.getProviderAuth('minimax').then(setAuthStatus).catch(() => {});
+  }, [gateway]);
+
+  const handleAuthSuccess = useCallback(() => {
+    setShowAuth(false);
+    gateway.getProviderAuth('minimax').then(setAuthStatus).catch(() => {});
+  }, [gateway]);
+
+  const set = useCallback(async (key: string, value: unknown) => {
+    try { await gateway.setConfig(key, value); } catch (err) { console.error(`failed to set ${key}:`, err); }
+  }, [gateway]);
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs font-semibold">MiniMax</span>
+        </div>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-medium text-foreground">authentication</div>
+                <div className="text-[10px] text-muted-foreground">
+                  {authStatus?.authenticated ? `connected via ${authStatus?.identity || authStatus?.method || 'credentials'}` : 'not authenticated'}
+                </div>
+              </div>
+              <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setShowAuth(!showAuth)}>
+                {showAuth ? 'cancel' : authStatus?.authenticated ? 'change' : 'set up'}
+              </Button>
+            </div>
+            {showAuth && (
+              <div className="border border-border rounded-lg p-3 bg-secondary/30">
+                <ProviderSetup provider="minimax" gateway={gateway} onSuccess={handleAuthSuccess} compact />
+              </div>
+            )}
+          </div>
+
+          <SettingRow label="region" description="endpoint region">
+            <Select value={region} onValueChange={v => set('provider.minimax.region', v)} disabled={disabled}>
+              <SelectTrigger className="h-7 w-40 text-[11px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="global" className="text-[11px]">global</SelectItem>
+                <SelectItem value="cn" className="text-[11px]">cn</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
+
+          <SettingRow label="auth mode" description="credential preference for runtime">
+            <Select value={authMode} onValueChange={v => set('provider.minimax.authMode', v)} disabled={disabled}>
+              <SelectTrigger className="h-7 w-40 text-[11px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="payg" className="text-[11px]">payg</SelectItem>
+                <SelectItem value="coding" className="text-[11px]">coding plan</SelectItem>
+                <SelectItem value="oauth" className="text-[11px]">oauth</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
+
+          <SettingRow label="model" description="default model id">
+            <Select value={model} onValueChange={v => set('provider.minimax.model', v)} disabled={disabled}>
+              <SelectTrigger className="h-7 w-52 text-[11px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MINIMAX_MODELS.map(m => (
+                  <SelectItem key={m.value} value={m.value} className="text-[11px]">{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingRow>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function QwenCard({ gateway, disabled }: { gateway: ReturnType<typeof useGateway>; disabled: boolean }) {
+  const [showAuth, setShowAuth] = useState(false);
+  const [authStatus, setAuthStatus] = useState<ProviderAuthView | null>(null);
+  const cfg = gateway.configData as Record<string, any> | null;
+  const authMode = cfg?.provider?.qwen?.authMode || 'payg';
+  const qwenModels = getQwenModels(authMode);
+  const model = cfg?.provider?.qwen?.model || qwenModels[0].value;
+
+
+  useEffect(() => {
+    gateway.getProviderAuth('qwen').then(setAuthStatus).catch(() => {});
+  }, [gateway]);
+
+  const handleAuthSuccess = useCallback(() => {
+    setShowAuth(false);
+    gateway.getProviderAuth('qwen').then(setAuthStatus).catch(() => {});
+  }, [gateway]);
+
+  const set = useCallback(async (key: string, value: unknown) => {
+    try { await gateway.setConfig(key, value); } catch (err) { console.error(`failed to set ${key}:`, err); }
+  }, [gateway]);
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs font-semibold">Qwen</span>
+        </div>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-medium text-foreground">authentication</div>
+                <div className="text-[10px] text-muted-foreground">
+                  {authStatus?.authenticated ? `connected via ${authStatus?.identity || authStatus?.method || 'credentials'}` : 'not authenticated'}
+                </div>
+              </div>
+              <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setShowAuth(!showAuth)}>
+                {showAuth ? 'cancel' : authStatus?.authenticated ? 'change' : 'set up'}
+              </Button>
+            </div>
+            {showAuth && (
+              <div className="border border-border rounded-lg p-3 bg-secondary/30">
+                <ProviderSetup provider="qwen" gateway={gateway} onSuccess={handleAuthSuccess} compact />
+              </div>
+            )}
+          </div>
+
+          <SettingRow label="auth mode" description="credential preference for runtime">
+            <Select value={authMode} onValueChange={v => set('provider.qwen.authMode', v)} disabled={disabled}>
+              <SelectTrigger className="h-7 w-40 text-[11px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="payg" className="text-[11px]">payg</SelectItem>
+                <SelectItem value="coding" className="text-[11px]">coding plan</SelectItem>
+                <SelectItem value="oauth" className="text-[11px]">oauth</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
+
+          <SettingRow label="model" description="default model id">
+            <Select value={model} onValueChange={v => set('provider.qwen.model', v)} disabled={disabled}>
+              <SelectTrigger className="h-7 w-52 text-[11px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {qwenModels.map(m => (
+                  <SelectItem key={m.value} value={m.value} className="text-[11px]">{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingRow>
         </div>
       </CardContent>
     </Card>

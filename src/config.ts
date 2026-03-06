@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import {
   DORABOT_CONFIG_PATH,
@@ -113,7 +113,7 @@ export type SecurityConfig = {
   tools?: ToolPolicyConfig;
 };
 
-export type ProviderName = 'claude' | 'codex' | 'minimax';
+export type ProviderName = 'claude' | 'codex' | 'minimax' | 'qwen';
 
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'max';
 
@@ -132,9 +132,26 @@ export type CodexProviderConfig = {
   webSearch?: CodexWebSearchMode;
 };
 
+export type ProviderAuthMode = 'payg' | 'coding' | 'oauth';
+export type MiniMaxRegion = 'global' | 'cn';
+
+export type MiniMaxProviderConfig = {
+  authMode?: ProviderAuthMode;
+  region?: MiniMaxRegion;
+  model?: string;
+  baseUrl?: string;
+};
+
+export type QwenProviderConfig = {
+  authMode?: ProviderAuthMode;
+  model?: string;
+  baseUrl?: string;
+};
 export type ProviderConfig = {
   name: ProviderName;
   codex?: CodexProviderConfig;
+  minimax?: MiniMaxProviderConfig;
+  qwen?: QwenProviderConfig;
 };
 
 export type McpServerEntry = {
@@ -176,7 +193,11 @@ export type Config = {
 };
 
 const DEFAULT_CONFIG: Config = {
-  provider: { name: 'claude' },
+  provider: {
+    name: 'claude',
+    minimax: { authMode: 'payg', region: 'global', model: 'MiniMax-M2.5' },
+    qwen: { authMode: 'payg', baseUrl: 'https://coding.dashscope.aliyuncs.com/v1', model: 'glm-5' },
+  },
   model: 'claude-sonnet-4-5-20250929',
   permissionMode: 'default',
   skills: {
@@ -290,7 +311,9 @@ export function isPathAllowed(
   // allowed: channel-specific overrides global if set
   const allowedRaw = channelOverride?.allowedPaths?.length
     ? channelOverride.allowedPaths
-    : (config.gateway?.allowedPaths || [home, '/tmp']);
+    : (config.gateway?.allowedPaths || [home, tmpdir()]);
   const allowed = allowedRaw.map(p => resolve(p.replace(/^~/, home)));
   return allowed.some(a => resolved.startsWith(a));
 }
+
+

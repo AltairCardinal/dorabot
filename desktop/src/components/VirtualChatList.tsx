@@ -10,6 +10,7 @@ type Props<T> = {
   bottomThresholdPx?: number;
   scrollBehavior?: ScrollBehavior;
   onScrollBehaviorConsumed?: () => void;
+  resetKey?: string;
 };
 
 export function VirtualChatList<T>({
@@ -22,6 +23,7 @@ export function VirtualChatList<T>({
   bottomThresholdPx = 140,
   scrollBehavior = 'auto',
   onScrollBehaviorConsumed,
+  resetKey,
 }: Props<T>) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const heightsRef = useRef<Map<number, number>>(new Map());
@@ -50,7 +52,6 @@ export function VirtualChatList<T>({
     queueMeasureRecalc();
   }, [queueMeasureRecalc]);
 
-  // Single ResizeObserver for all row elements
   useEffect(() => {
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -142,11 +143,18 @@ export function VirtualChatList<T>({
     onScrollBehaviorConsumed?.();
   }, [items, onScrollBehaviorConsumed, scrollBehavior]);
 
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    nearBottomRef.current = true;
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'auto' });
+    setScrollTop(viewport.scrollTop);
+  }, [resetKey]);
+
   const attachRow = useCallback((index: number, el: HTMLDivElement | null) => {
     const ro = observerRef.current;
     if (!ro) return;
 
-    // Unobserve old element for this index
     const prev = observedRef.current.get(index);
     if (prev && prev !== el) {
       ro.unobserve(prev);
@@ -155,12 +163,10 @@ export function VirtualChatList<T>({
 
     if (!el) return;
 
-    // Tag element with index for the ResizeObserver callback
     el.dataset.virtualIndex = String(index);
     observedRef.current.set(index, el);
     ro.observe(el);
 
-    // Initial measurement
     updateHeight(index, el);
   }, [updateHeight]);
 

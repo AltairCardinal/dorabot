@@ -22,7 +22,22 @@ function resolveNodeBinary(): string {
     return _nodeBinary;
   }
 
-  // 2. Try resolving from login shell (handles nvm, fnm, volta, homebrew)
+  // 2. Try resolving from shell lookup (Windows: where, POSIX: login shell)
+  if (process.platform === 'win32') {
+    try {
+      const winNode = execSync('where node', { timeout: 5000, encoding: 'utf-8' })
+        .split(/\r?\n/)[0]?.trim();
+      if (winNode && existsSync(winNode)) {
+        _nodeBinary = winNode;
+        console.log(`[claude] node binary (where): ${_nodeBinary}`);
+        return _nodeBinary;
+      }
+    } catch {
+      // continue to fallback candidates
+    }
+  }
+
+  // 2b. POSIX login shell lookup (handles nvm, fnm, volta, homebrew)
   try {
     const shell = process.env.SHELL || '/bin/zsh';
     _nodeBinary = execSync(`${shell} -lc 'command -v node'`, {
@@ -37,7 +52,7 @@ function resolveNodeBinary(): string {
 
   // 3. Check common locations
   const candidates = [
-    '/usr/local/bin/node',
+    process.platform === 'win32' ? 'C:/Program Files/nodejs/node.exe' : '/usr/local/bin/node',
     '/opt/homebrew/bin/node',
     `${process.env.HOME}/.nvm/current/bin/node`,
     `${process.env.HOME}/.fnm/current/bin/node`,
@@ -490,7 +505,7 @@ export class ClaudeProvider implements Provider {
     }
   }
 
-  async loginWithApiKey(apiKey: string): Promise<ProviderAuthStatus> {
+  async loginWithApiKey(apiKey: string, _options?: { keyType?: 'payg' | 'coding' }): Promise<ProviderAuthStatus> {
     const v = await validateApiKey(apiKey);
     if (!v.valid) {
       return { authenticated: false, method: 'api_key', error: v.error };
@@ -842,3 +857,4 @@ export class ClaudeProvider implements Provider {
     return { result, sessionId, usage };
   }
 }
+

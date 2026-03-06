@@ -4,7 +4,7 @@ import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSy
 import { writeFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { resolve as pathResolve, join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { createConnection } from 'node:net';
 
 const resolve = (p: string) => pathResolve(p.startsWith('~') ? p.replace('~', homedir()) : p);
@@ -52,7 +52,7 @@ import { AUTONOMOUS_SCHEDULE_ID, buildAutonomousCalendarItem, PULSE_INTERVALS, D
 import { ensureWorktreeForPlan, getWorktreeStats, mergeWorktreeBranch, pushWorktreePr, removeWorktree } from '../worktree/manager.js';
 import {
   DORABOT_DIR,
-  GATEWAY_SOCKET_PATH,
+  GATEWAY_IPC_PATH,
   GATEWAY_TOKEN_PATH,
   OWNER_CHAT_IDS_PATH,
   SKILLS_DIR,
@@ -273,10 +273,13 @@ export type Gateway = {
 
 export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
   const { config } = opts;
-  const socketPath = opts.socketPath || GATEWAY_SOCKET_PATH;
+  const socketPath = opts.socketPath || GATEWAY_IPC_PATH;
+  const isWindowsIpc = process.platform === 'win32';
   const startedAt = Date.now();
   ensureWorkspace();
-  mkdirSync(dirname(socketPath), { recursive: true });
+  if (!isWindowsIpc) {
+    mkdirSync(dirname(socketPath), { recursive: true });
+  }
 
   // stable gateway auth token — reuse existing, only generate on first run
   const tokenPath = GATEWAY_TOKEN_PATH;
@@ -585,20 +588,21 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
   cleanupOldEvents(7 * 24 * 60 * 60);
 
   // kill orphaned Chrome processes from previous runs (dorabot browser profile)
-  try {
-    const { execSync: execSyncLocal } = await import('node:child_process');
-    const pgrep = execSyncLocal('pgrep -f "user-data-dir.*\\.dorabot/browser/profile"', { encoding: 'utf-8', timeout: 3000 }).trim();
-    if (pgrep) {
-      const pids = pgrep.split('\n').filter(Boolean);
-      for (const pid of pids) {
-        try { process.kill(parseInt(pid, 10), 'SIGTERM'); } catch {}
+  if (process.platform !== 'win32') {
+    try {
+      const { execSync: execSyncLocal } = await import('node:child_process');
+      const pgrep = execSyncLocal('pgrep -f "user-data-dir.*\\.dorabot/browser/profile"', { encoding: 'utf-8', timeout: 3000 }).trim();
+      if (pgrep) {
+        const pids = pgrep.split('\n').filter(Boolean);
+        for (const pid of pids) {
+          try { process.kill(parseInt(pid, 10), 'SIGTERM'); } catch {}
+        }
+        console.log(`[gateway] killed ${pids.length} orphaned browser process(es)`);
       }
-      console.log(`[gateway] killed ${pids.length} orphaned browser process(es)`);
+    } catch {
+      // no matching processes, or pgrep failed — fine
     }
-  } catch {
-    // no matching processes, or pgrep failed — fine
   }
-
   function scheduleRunEventPrune(sessionKey: string, maxSeqInclusive: number): void {
     if (!streamV2Enabled) return;
     const existing = runEventPruneTimers.get(sessionKey);
@@ -4290,18 +4294,22 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
 
         // ── provider RPCs ─────────────────────────────────────────
         case 'provider.detect': {
-          const [claudeInstalled, codexInstalled, claudeOAuth, codexAuth, apiKey] =
+          const [claudeInstalled, codexInstalled, claudeOAuth, codexAuth, apiKey, minimaxAuth, qwenAuth] =
             await Promise.all([
               isClaudeInstalled(),
               isCodexInstalled(),
               Promise.resolve(hasOAuthTokens()),
               Promise.resolve(hasCodexAuth()),
               Promise.resolve(!!getClaudeApiKey()),
+              getProviderByName('minimax').then((p) => p.getAuthStatus()).catch(() => ({ authenticated: false })),
+              getProviderByName('qwen').then((p) => p.getAuthStatus()).catch(() => ({ authenticated: false })),
             ]);
 
           return { id, result: {
             claude: { installed: claudeInstalled, hasOAuth: claudeOAuth, hasApiKey: apiKey },
             codex: { installed: codexInstalled, hasAuth: codexAuth },
+            minimax: { installed: true, hasAuth: !!(minimaxAuth as { authenticated?: boolean }).authenticated },
+            qwen: { installed: true, hasAuth: !!(qwenAuth as { authenticated?: boolean }).authenticated },
           }};
         }
 
@@ -4317,8 +4325,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
 
         case 'provider.set': {
           const name = params?.name as ProviderName;
-          if (!name || !['claude', 'codex'].includes(name)) {
-            return { id, error: 'name must be "claude" or "codex"' };
+          if (!name || !['claude', 'codex', 'minimax', 'qwen'].includes(name)) {
+            return { id, error: 'name must be "claude", "codex", "minimax", or "qwen"' };
           }
           config.provider.name = name;
           saveConfig(config);
@@ -4347,9 +4355,11 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
           try {
             const providerName = (params?.provider as string) || config.provider.name;
             const apiKey = params?.apiKey as string;
+            const keyType = ((params?.keyType as string) || 'payg').toLowerCase();
             if (!apiKey) return { id, error: 'apiKey required' };
+            if (!['payg', 'coding'].includes(keyType)) return { id, error: 'keyType must be "payg" or "coding"' };
             const p = await getProviderByName(providerName);
-            const status = await p.loginWithApiKey(apiKey);
+            const status = await p.loginWithApiKey(apiKey, { keyType: keyType as 'payg' | 'coding' });
             broadcast({ event: 'provider.auth_complete', data: { provider: providerName, status } });
             return { id, result: status };
           } catch (err) {
@@ -4364,7 +4374,25 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             if (!p.loginWithOAuth) {
               return { id, error: `${providerName} doesn't support OAuth` };
             }
-            const { authUrl, loginId } = await p.loginWithOAuth();
+
+            let oauthOptions: Record<string, unknown> | undefined;
+            if (providerName === 'minimax') {
+              const regionRaw = (params?.region as string | undefined)?.toLowerCase();
+              let region = config.provider.minimax?.region || 'global';
+              if (regionRaw) {
+                if (!['global', 'cn'].includes(regionRaw)) {
+                  return { id, error: 'region must be "global" or "cn"' };
+                }
+                region = regionRaw as 'global' | 'cn';
+                if (!config.provider.minimax) config.provider.minimax = {};
+                config.provider.minimax.region = region;
+                saveConfig(config);
+                broadcast({ event: 'config.update', data: { key: 'provider.minimax.region', value: region } });
+              }
+              oauthOptions = { region };
+            }
+
+            const { authUrl, loginId } = await p.loginWithOAuth(oauthOptions);
             broadcast({ event: 'provider.oauth_url', data: { provider: providerName, authUrl, loginId } });
             return { id, result: { authUrl, loginId } };
           } catch (err) {
@@ -4485,8 +4513,8 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
 
           // provider config keys
           if (key === 'provider.name' && typeof value === 'string') {
-            if (!['claude', 'codex', 'minimax'].includes(value)) {
-              return { id, error: 'provider.name must be "claude", "codex", or "minimax"' };
+            if (!['claude', 'codex', 'minimax', 'qwen'].includes(value)) {
+              return { id, error: 'provider.name must be "claude", "codex", "minimax", or "qwen"' };
             }
             config.provider.name = value as ProviderName;
             saveConfig(config);
@@ -4575,6 +4603,68 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
             if (!valid.includes(value)) return { id, error: `webSearch must be one of: ${valid.join(', ')}` };
             if (!config.provider.codex) config.provider.codex = {};
             config.provider.codex.webSearch = value as any;
+            saveConfig(config);
+            broadcast({ event: 'config.update', data: { key, value } });
+            return { id, result: { key, value } };
+          }
+
+          if (key === 'provider.minimax.authMode' && typeof value === 'string') {
+            const valid = ['payg', 'coding', 'oauth'];
+            if (!valid.includes(value)) return { id, error: 'provider.minimax.authMode must be one of: payg, coding, oauth' };
+            if (!config.provider.minimax) config.provider.minimax = {};
+            config.provider.minimax.authMode = value as any;
+            saveConfig(config);
+            broadcast({ event: 'config.update', data: { key, value } });
+            return { id, result: { key, value } };
+          }
+
+          if (key === 'provider.minimax.region' && typeof value === 'string') {
+            const valid = ['global', 'cn'];
+            if (!valid.includes(value)) return { id, error: 'provider.minimax.region must be one of: global, cn' };
+            if (!config.provider.minimax) config.provider.minimax = {};
+            config.provider.minimax.region = value as any;
+            saveConfig(config);
+            broadcast({ event: 'config.update', data: { key, value } });
+            return { id, result: { key, value } };
+          }
+
+          if (key === 'provider.minimax.model' && typeof value === 'string') {
+            if (!config.provider.minimax) config.provider.minimax = {};
+            config.provider.minimax.model = value;
+            saveConfig(config);
+            broadcast({ event: 'config.update', data: { key, value } });
+            return { id, result: { key, value } };
+          }
+
+          if (key === 'provider.minimax.baseUrl' && typeof value === 'string') {
+            if (!config.provider.minimax) config.provider.minimax = {};
+            config.provider.minimax.baseUrl = value;
+            saveConfig(config);
+            broadcast({ event: 'config.update', data: { key, value } });
+            return { id, result: { key, value } };
+          }
+
+          if (key === 'provider.qwen.authMode' && typeof value === 'string') {
+            const valid = ['payg', 'coding', 'oauth'];
+            if (!valid.includes(value)) return { id, error: 'provider.qwen.authMode must be one of: payg, coding, oauth' };
+            if (!config.provider.qwen) config.provider.qwen = {};
+            config.provider.qwen.authMode = value as any;
+            saveConfig(config);
+            broadcast({ event: 'config.update', data: { key, value } });
+            return { id, result: { key, value } };
+          }
+
+          if (key === 'provider.qwen.model' && typeof value === 'string') {
+            if (!config.provider.qwen) config.provider.qwen = {};
+            config.provider.qwen.model = value;
+            saveConfig(config);
+            broadcast({ event: 'config.update', data: { key, value } });
+            return { id, result: { key, value } };
+          }
+
+          if (key === 'provider.qwen.baseUrl' && typeof value === 'string') {
+            if (!config.provider.qwen) config.provider.qwen = {};
+            config.provider.qwen.baseUrl = value;
             saveConfig(config);
             broadcast({ event: 'config.update', data: { key, value } });
             return { id, result: { key, value } };
@@ -4954,7 +5044,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
         case 'security.paths.get': {
           return { id, result: {
             global: {
-              allowed: config.gateway?.allowedPaths || [homedir(), '/tmp'],
+              allowed: config.gateway?.allowedPaths || [homedir(), tmpdir()],
               denied: config.gateway?.deniedPaths || [],
               alwaysDenied: ALWAYS_DENIED,
             },
@@ -5069,6 +5159,19 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
   });
 
   const prepareGatewaySocket = async (targetPath: string): Promise<void> => {
+    if (isWindowsIpc) {
+      try {
+        await connectToSocket(targetPath, 400);
+        throw new Error(`gateway already running on ${targetPath}`);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'ENOENT' || code === 'ENOTSOCK') {
+          return;
+        }
+        throw err;
+      }
+    }
+
     if (!existsSync(targetPath)) return;
     try {
       await connectToSocket(targetPath, 400);
@@ -5088,7 +5191,6 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
       throw err;
     }
   };
-
   // ── WebSocket origin validation ────────────────────────────
   const allowedOrigins = new Set([
     'http://localhost:5173',  // vite dev
@@ -5260,16 +5362,19 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     httpServer.on('error', onError);
     httpServer.listen(socketPath, () => {
       httpServer.off('error', onError);
-      try {
-        chmodSync(socketPath, 0o600);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        httpServer.close(() => {
-          reject(new Error(`failed to chmod gateway socket ${socketPath}: ${message}`));
-        });
-        return;
+      if (!isWindowsIpc) {
+        try {
+          chmodSync(socketPath, 0o600);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          httpServer.close(() => {
+            reject(new Error(`failed to chmod gateway socket ${socketPath}: ${message}`));
+          });
+          return;
+        }
       }
-      console.log(`[gateway] listening on unix://${socketPath}`);
+      const target = isWindowsIpc ? `pipe://${socketPath}` : `unix://${socketPath}`;
+      console.log(`[gateway] listening on ${target}`);
       resolve();
     });
   });
@@ -5310,7 +5415,7 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
         wss.close(() => {
           httpServer.close(() => {
             try {
-              if (existsSync(socketPath)) unlinkSync(socketPath);
+              if (!isWindowsIpc && existsSync(socketPath)) unlinkSync(socketPath);
             } catch {
               // ignore cleanup failures on shutdown
             }
@@ -5326,3 +5431,13 @@ export async function startGateway(opts: GatewayOptions): Promise<Gateway> {
     context,
   };
 }
+
+
+
+
+
+
+
+
+
+

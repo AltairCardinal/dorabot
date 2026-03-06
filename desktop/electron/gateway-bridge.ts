@@ -1,6 +1,6 @@
 /**
  * Gateway WebSocket bridge - runs in the main process.
- * Connects to the local gateway over a Unix domain socket and relays
+ * Connects to the local gateway over a local IPC endpoint (Unix socket or Windows named pipe) and relays
  * messages to/from renderer via IPC.
  */
 import WebSocket from 'ws';
